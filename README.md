@@ -15,9 +15,11 @@ SDN Payments is a forwarding system that provides QoS (Quality of Service) to ho
  1. Setups up topology 4h_3s (shown above) 
  2. Starts two iperf servers at h3 on ports 4000 and  5000
  3. Creates three queues in s1 on interface eth3
-	 -queue0: 500Mbit/s
-	 -queue1: 300Mbit/s
-	 -queue2: 200Mbit/s 
+
+> 	 queue0: 500Mbit/s  	 
+>   queue1: 300Mbit/s 	
+>   queue2: 200Mbit/s
+
  4. Starts iperf client on h1 to h3
  5. Starts iperf client on h2 to h3
 
