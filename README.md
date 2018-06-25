@@ -5,6 +5,8 @@ SDN Payments is a forwarding system that provides QoS (Quality of Service) to ho
 
  1. Mininet (2.2.2 confirmed working) 
  2. OpenVSwitch (2.9.0 confirmed working)
+## Run Test
+./run_network.sh
 
 ## Files
 
