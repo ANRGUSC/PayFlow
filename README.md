@@ -10,8 +10,7 @@ OpenVSwitch (2.9.0 confirmed working)
 > pox/ext/price_static.py
 
 Provides static forwarding for the topology shown below:
-![](https://picasaweb.google.com/114819378114724397724/6571112153723329297#6571112154922406914 "4h_3s_topo")
-
+![4h_3s_topo](https://lh3.googleusercontent.com/hShnqz5EBqe0al-Dtiq80lbNsOayPyCPO4VFzSFmGCZ14eHqNsGnv6jdfQsMdJiYSHrA5uS4_NM_ "topo1")
  - Forwards IP packets from h1 to h3 into a 300Mbit/s queue 
  - Forwards IP packets from h2 to h3 into a 200Mbit/s queue
  - Forwards all other IP packets without queue 
