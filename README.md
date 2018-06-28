@@ -11,8 +11,8 @@ SDN Payments is a forwarding system that provides QoS (Quality of Service) to ho
 ./run_network.sh [option]
 
 Options:
-	staticnr - static forwarding with no QoS requests
-	staticr - static forwarding with QoS requests through TCP
+	**staticnr** - static forwarding with no QoS requests
+	**staticr** - static forwarding with QoS requests through TCP
 
 ### staticnr
 Runs automatically. Shows bandwidth between h1 and h3 then h2 and h3.
