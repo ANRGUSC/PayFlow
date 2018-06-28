@@ -55,8 +55,8 @@ class ANRGTopo( Topo ):
 
 #topos = { 'mytopo': ( lambda: ANRGTopo() ) }
 
-def clientBandwidthTest(server,serverPort,serverIP):
-	print server.cmd('iperf -c %s -p %d' %(serverIP,serverPort))
+def clientBandwidthTest(client,serverPort,serverIP):
+	print client.cmd('iperf -c %s -p %d' %(serverIP,serverPort))
 
 #create toplogy 
 mytopo = ANRGTopo()
