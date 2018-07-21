@@ -1,0 +1,8 @@
+{
+	"level": "requested_level",
+	"currency": "iota",
+	"address":  "buyer_address",
+	"public-key": "buyer_public_key",
+	"ip1": "first_ip",
+	"ip2": "second_ip"
+}
