@@ -13,6 +13,7 @@ SDN Payments is a forwarding system that provides QoS (Quality of Service) to ho
 Options:
 	staticnr - static forwarding with no QoS requests
 	staticr - static forwarding with QoS requests through TCP
+	staticp - static forwarding with QoS requests through TCP. Requires payments using IOTA
 
 ### staticnr
 Runs automatically. Shows bandwidth between h1 and h3 then h2 and h3.
@@ -32,6 +33,29 @@ Type "test" then enter. This will send a QoS request in the form of a JSON messa
     iperf h1 h3
 
 It should shown around 500Mbit/s
+
+### staticp
+./run_network.sh staticp 
+
+Running the above will create virtual network, create two iperf servers on host3 ports 4000 and 5000 then create queues on switch 1. Finally it will open up Mininet CLI.
+
+Test intial configuration using: 
+
+    iperf h1 h3
+
+Now in a new terminal, go in sdn_payments/staticp and run 
+
+
+    sudo python client.py
+
+Follow on screen instructions and QoS should be established sucessfully.
+
+Finally to see results, on Mininet CLI:
+
+
+    iperf h1 h3
+
+
 ## Files
 
 > staticnr/mininet_setup_staticnr.py

@@ -28,9 +28,21 @@ from Crypto.Cipher import AES
 # Create a logger for this component
 log = core.getLogger()    
 
+class ServiceChanged(revent.Event):
+  """docstring for ServiceChanged"""
+  def __init__(self,ip1,ip2,level,opcode):
+    revent.Event.__init__(self)
+    self.ip1 = ip1
+    self.ip2 = ip2
+    self.level = level
+    self.opcode = opcode
 
-class qosBroker(object):
+
+class qosBroker(revent.EventMixin):
   """docstring for qosBroker"""
+  _eventMixin_events = set([
+    ServiceChanged,
+    ])
   def __init__(self,port):
     client = 'http://node02.iotatoken.nl:14265' #Look on www.iotatoken.nl for downtime announcements and real time info
     seed = ''
@@ -62,11 +74,22 @@ class qosBroker(object):
     #receive ORDER message
     message_json = json.loads(conn.recv(2048))
 
-
     #read ORDER and verify on IOTA network that client payed (optional)
+    payment_id = message_json['verification']
+    signature = message_json['signature']
+    order = message_json['data']
+    order = json.loads(order)
+    level = order['level']
+    buyer_address = order['address']
+    buyer_key = order['public-key']
+    ip1 = order['ip1']
+    ip2 = order['ip2']
+
+    #skipping verification for now
 
 
-    #raise event NewService (controller listens)
+    #raise event ServiceChanged (controller listens)  
+    self.raiseEvent(ServiceChanged(ip1,ip2,level,"ADD"))
 
 
   def serverThread(self,server):
@@ -147,7 +170,8 @@ class PriceStaticRequestsController(object):
     #self.services = {("10.0.0.1","10.0.0.3"): 2}
     self.connections = {} #switch to connection mapping eg.'s1'
     self.broker = qosBroker(6113)
-    
+
+    self.broker.addListeners(self)
     core.openflow.addListeners(self)
 
   def _handle_ConnectionUp(self,event):
@@ -164,11 +188,21 @@ class PriceStaticRequestsController(object):
     self.connections[switch] = PriceStaticRequestsSwitch(event.connection,switch)
     #PriceStaticRequestsSwitch(event.connection,switch)
 
+  def _handle_ServiceChanged(self,event):
+    #print "ip1:" + event.ip1 + " ip2:" + event.ip2 + " level:" + event.level + " op:" + event.opcode
+    if event.opcode == "ADD":
+      self.services[(event.ip1,event.ip2)] = int(event.level[5])
+    elif event.opcode == "REMOVE":
+      self.services[(event.ip1,event.ip2)].remove()
+      
+    self.updateAllFlows()
+
   def updateAllFlows(self):
-    self.servicesMutex.aquire()
+    self.servicesMutex.acquire()
     for k,v in self.connections.items():
       v.updateFlows(self.services)
     self.servicesMutex.release()
+
 
 
 class PriceStaticRequestsSwitch(object):
@@ -179,7 +213,8 @@ class PriceStaticRequestsSwitch(object):
     self.identifier = identifier #eg "s1" or "s2"
     self.ipToPort = {} #used for static l3 forwarding
     self.initialized = False #initStaticRoute will run once at the start and put all IP packets into lowest priority queue. timeouts are 0 so using a initialized flag so QoS flows don't get overwritten
-    
+    self.unusedQueues = {}
+
     #static IP fowarding table
     #see diagram 4h_3s in README.md
     if identifier == "s1":
@@ -187,6 +222,10 @@ class PriceStaticRequestsSwitch(object):
       self.ipToPort["10.0.0.2"] = 2
       self.ipToPort["10.0.0.3"] = 3
       self.ipToPort["10.0.0.4"] = 4
+      for interface in {'eth1','eth2','eth3'}:
+        for level in {1,2,3}:
+          self.unusedQueues[(interface,level)] = [0,1]
+
     elif identifier == "s2":
       self.ipToPort["10.0.0.1"] = 1
       self.ipToPort["10.0.0.2"] = 1
@@ -232,22 +271,30 @@ class PriceStaticRequestsSwitch(object):
     msg.actions.append(of.ofp_action_output(port=port))
     self.connection.send(msg)
 
-  def getQueueId(self,port,level):
-    #there are three queues on each interface
-    #eth1  eth 2  eth 3 eth 4
-    #0,1,2 3,4,5, 6,7,8 9,10,11
+  def getQueueId(self,port,level,queueNumber=None):
+    #there are seven queues on each interface on switch1
+    #eth1           eth 2               eth 3                 eth 4
+    #0,1,2,3,4,5,6  7,8,9,10,11,12,13   14,15,16 17,18,19,20  21,22,23,24,25,26,27
     #eth1:
-    #level 2 is queue 0 (highest bandwidth)
-    #level 1 is queue 1 
-    #level 0 is queue 2 (lowest bandwidth) default queue
+    #level 3 are queues 0,1 (highest bandwidth)
+    #level 2 are queues 2,3 
+    #level 1 are queues 4,5
+    #level 0 are queues 6 (lowest bandwidth) default queue
     #eth2:
-    #level 2 is queue 3 (highest bandwdith)
-    #level 1 is queue 4
-    #level 0 is queue 5 (lowest bandwidth) default queue
+    #level 3 are queues 7,8
+    #level 2 are queues 9,10
+    #level 1 are queues 11,12
+    #level 0 are queues 13
 
-    #for level l and port p
-    #queue = 3(p-1) + (2-l)
-    return (port-1)*3 + (2-int(level))
+    #currently there are two queues per level on each interface (statically set) so queue number can be 0 or 1 except for level0
+
+    #for level l, port p and queue number n
+    #queue = 7(p-1) + (6-2l) + n
+
+    if (queueNumber == None) or (level == 0):
+      queueNumber = 0
+
+    return (port-1)*7 + (6-2*level) + queueNumber
 
   def initStaticRoute(self):
     if self.initialized == False:
@@ -266,7 +313,10 @@ class PriceStaticRequestsSwitch(object):
 
         for ip1 in ips:
           for ip2 in ips:
-            self.enqueue(10,0,0,0x0800,ip1,self.ipToPort[ip1],self.getQueueId(self.ipToPort[ip1],0),ip2)
+            if ip1 is not ip2:
+              self.enqueue(10,0,0,0x0800,ip1,self.ipToPort[ip1],self.getQueueId(self.ipToPort[ip1],0),ip2)
+              print "ip1:" + ip1 + " ip2:" + ip2 
+              print "queueid:" + str(self.getQueueId(self.ipToPort[ip1],0))
         # self.enqueue(100,0,0,0x0800,"10.0.0.1",self.ipToPort["10.0.0.1"],2)
         # self.enqueue(100,0,0,0x0800,"10.0.0.2",self.ipToPort["10.0.0.2"],5)
         # self.enqueue(100,0,0,0x0800,"10.0.0.3",self.ipToPort["10.0.0.3"],8)
@@ -324,11 +374,11 @@ class PriceStaticRequestsSwitch(object):
       print("connection dpid=",self.connection.dpid)
       for k,v in services.items():
         #loop through all IP pairs in current QoS service database
-        ip1 = k[0]
-        ip2 = k[1]
-        level = v
+        ip1 = str(k[0])
+        ip2 = str(k[1])
+        level = int(v)
 
-        print ("enqueue src:", ip1, " dst:", ip2, " port:", self.ipToPort[ip2], " queueid:", (self.getQueueId(self.ipToPort[ip2],level)))
+        print ("enqueue src:", ip1, " dst:", ip2, " port:", self.ipToPort[ip2], " queueid:", self.getQueueId(self.ipToPort[ip2],level))
         self.enqueue(100,0,0,0x0800,ip2,self.ipToPort[ip2],(self.getQueueId(self.ipToPort[ip2],level)))
         print ("enqueue src:", ip2, " dst:", ip1, " port:", self.ipToPort[ip1], " queueid:", self.getQueueId(self.ipToPort[ip1],level) )
         self.enqueue(100,0,0,0x0800,ip1,self.ipToPort[ip1],(self.getQueueId(self.ipToPort[ip1],level)))

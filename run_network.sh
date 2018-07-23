@@ -13,6 +13,9 @@ case $1 in
 	staticr )
 		sudo python staticr/mininet_setup_staticr.py
 		;;
+	staticp )
+		sudo python staticp/mininet_setup_staticp.py
+		;;
 	*)
 		echo Invalid option
 		echo Available options:

@@ -78,3 +78,11 @@ while not serviceSelected:
 #send payment transaction to broker_payment_address (IOTA)
 
 #send ORDER message to broker/controller 
+with open('order.json') as orderFile:
+	orderData = orderFile.read()
+	orderData = json.loads(orderData)
+
+order = prepareJSONstring("ORDER",json.dumps(orderData),"test-signature","test-txid")
+s.send(order)
+print order
+
