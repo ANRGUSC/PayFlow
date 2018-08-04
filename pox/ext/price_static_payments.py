@@ -29,7 +29,13 @@ from Crypto.Cipher import AES
 log = core.getLogger()    
 
 class ServiceChanged(revent.Event):
-  """docstring for ServiceChanged"""
+  """Event raised by qosBroker when there is a change in service levels. 
+
+  Opcodes:
+    ADD - add a service between ip1 and ip2
+    REMOVE - remove the service between ip1 and ip2 
+
+  """
   def __init__(self,ip1,ip2,level,opcode):
     revent.Event.__init__(self)
     self.ip1 = ip1
@@ -39,7 +45,10 @@ class ServiceChanged(revent.Event):
 
 
 class qosBroker(revent.EventMixin):
-  """docstring for qosBroker"""
+  """Class that handles all QoS payments 
+  
+
+  """
   _eventMixin_events = set([
     ServiceChanged,
     ])
@@ -73,6 +82,7 @@ class qosBroker(revent.EventMixin):
 
     #receive ORDER message
     message_json = json.loads(conn.recv(2048))
+    print json.dumps(message_json,sort_keys=True, indent=4, separators=(',',':'))
 
     #read ORDER and verify on IOTA network that client payed (optional)
     payment_id = message_json['verification']
@@ -84,6 +94,7 @@ class qosBroker(revent.EventMixin):
     buyer_key = order['public-key']
     ip1 = order['ip1']
     ip2 = order['ip2']
+
 
     #skipping verification for now
 
@@ -163,7 +174,9 @@ class qosBroker(revent.EventMixin):
 
 
 class PriceStaticRequestsController(object):
-  """docstring for PriceStaticRequestsContar  oller"""
+  """Class that represents the controller in the SDN architecture
+
+  """
   def __init__(self):
     self.services = {} #ip pairing to service level 
     self.servicesMutex = threading.Lock() 
@@ -206,14 +219,16 @@ class PriceStaticRequestsController(object):
 
 
 class PriceStaticRequestsSwitch(object):
-  """docstring for PriceStaticSwitch"""
+  """Class that represents indivisual switches on the SDN. Instantiated once when a switch is discovered.
+
+  """
   def __init__(self,connection,identifier):
     self.connection = connection
     self.arpTable = {} #useless for static 
     self.identifier = identifier #eg "s1" or "s2"
     self.ipToPort = {} #used for static l3 forwarding
     self.initialized = False #initStaticRoute will run once at the start and put all IP packets into lowest priority queue. timeouts are 0 so using a initialized flag so QoS flows don't get overwritten
-    self.unusedQueues = {}
+    self.unusedQueues = {} #stack 
 
     #static IP fowarding table
     #see diagram 4h_3s in README.md
@@ -317,10 +332,6 @@ class PriceStaticRequestsSwitch(object):
               self.enqueue(10,0,0,0x0800,ip1,self.ipToPort[ip1],self.getQueueId(self.ipToPort[ip1],0),ip2)
               print "ip1:" + ip1 + " ip2:" + ip2 
               print "queueid:" + str(self.getQueueId(self.ipToPort[ip1],0))
-        # self.enqueue(100,0,0,0x0800,"10.0.0.1",self.ipToPort["10.0.0.1"],2)
-        # self.enqueue(100,0,0,0x0800,"10.0.0.2",self.ipToPort["10.0.0.2"],5)
-        # self.enqueue(100,0,0,0x0800,"10.0.0.3",self.ipToPort["10.0.0.3"],8)
-        # self.enqueue(100,0,0,0x0800,"10.0.0.4",self.ipToPort["10.0.0.4"],11)
 
         self.initialized = True
 
