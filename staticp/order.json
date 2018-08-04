@@ -4,5 +4,6 @@
 	"address":  "test-iota-address",
 	"public-key": "test-public-key",
 	"ip1": "10.0.0.1",
-	"ip2": "10.0.0.3"
+	"ip2": "10.0.0.3",
+	"time": "100"
 }

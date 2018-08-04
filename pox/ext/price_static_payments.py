@@ -95,12 +95,17 @@ class qosBroker(revent.EventMixin):
     ip1 = order['ip1']
     ip2 = order['ip2']
 
-
     #skipping verification for now
 
 
     #raise event ServiceChanged (controller listens)  
-    self.raiseEvent(ServiceChanged(ip1,ip2,level,"ADD"))
+    if 'time' in order:
+      time = order['time']
+      self.raiseEvent(ServiceChanged(ip1,ip2,level,"ADD"))
+      Timer(int(time),self.raiseEvent,args=[ServiceChanged(ip1,ip2,level,"REMOVE")]) 
+
+    else:
+      self.raiseEvent(ServiceChanged(ip1,ip2,level,"ADD"))
 
 
   def serverThread(self,server):
@@ -206,7 +211,8 @@ class PriceStaticRequestsController(object):
     if event.opcode == "ADD":
       self.services[(event.ip1,event.ip2)] = int(event.level[5])
     elif event.opcode == "REMOVE":
-      self.services[(event.ip1,event.ip2)].remove()
+      #self.services[(event.ip1,event.ip2)].remove()
+      self.services[(event.ip1,event.ip2)] = 0
       
     self.updateAllFlows()
 

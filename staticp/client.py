@@ -125,7 +125,7 @@ while not serviceSelected:
 	if(service == 'level0'):
 		print "level0 is free"
 		continue
-	confirm = raw_input('The price is ' + menu_json[str(service)] + ' . Is this OK? (y/n):')
+	confirm = raw_input('The price is ' + menu_json[str(service)] + ' per second . Is this OK? (y/n):')
 	if(confirm == 'y'):
 		serviceSelected = True
 
@@ -133,9 +133,12 @@ while not serviceSelected:
 ip1 = raw_input('Enter IP1:')
 ip2 = raw_input('Enter IP2:')
 
+#prompt client for time 
+time = raw_input('Enter time (s):')
+
 
 #send records transaction to broker_payment_address (IOTA)
-message = service + ' ' + ip1 + ' ' + ip2
+message = service + ' ' + ip1 + ' ' + ip2 + ' ' + time + 's'
 message_signature = signData(message,signature_key)
 tx_id = prepareTransaction(api,broker_payment_address,str(message))
 
@@ -159,6 +162,7 @@ with open('order.json') as orderFile:
 orderData['level'] = service
 orderData['ip1'] = ip1
 orderData['ip2'] = ip2 
+orderData['time'] = time
 
 order = prepareJSONstring(message_type="ORDER",data=json.dumps(orderData),verification=tx_id)
 s.send(order)
