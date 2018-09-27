@@ -26,7 +26,7 @@ import Crypto.PublicKey.RSA as RSA
 from Crypto.Cipher import AES
 
 # Create a logger for this component
-log = core.getLogger()    
+log = core.getLogger()
 
 class ServiceChanged(revent.Event):
   """Event raised by qosBroker when there is a change in service levels. 
@@ -43,6 +43,14 @@ class ServiceChanged(revent.Event):
     self.level = level
     self.opcode = opcode
 
+class Preorder(revent.Event):
+
+  """Event raised by qosBroker when it receive a preorder message from client"""
+  def __init__(self,ip1,ip2,level):
+    revent.Event.__init__(self)
+    self.ip1 = ip1
+    self.ip2 = ip2
+    self.level = level
 
 class qosBroker(revent.EventMixin):
   """Class that handles all QoS payments 
@@ -50,7 +58,7 @@ class qosBroker(revent.EventMixin):
 
   """
   _eventMixin_events = set([
-    ServiceChanged,
+    ServiceChanged,Preorder,
     ])
   def __init__(self,port):
     client = 'http://node02.iotatoken.nl:14265' #Look on www.iotatoken.nl for downtime announcements and real time info
@@ -80,6 +88,20 @@ class qosBroker(revent.EventMixin):
     #send MENU message
     self.sendMenu(conn)
 
+    #receive PREORDER message
+    message_json = json.loads(conn.recv(2048))
+    print json.dumps(message_json,sort_keys=True, indent=4, separators=(',',':'))
+    order = message_json['data']
+    order = json.loads(order)
+    level = order['level']
+    ip1 = order['ip1']
+    ip2 = order['ip2']
+
+    #raise event Preorder(controller listens)
+
+    self.raiseEvent(Preorder(ip1,ip2,level))
+
+
     #receive ORDER message
     message_json = json.loads(conn.recv(2048))
     print json.dumps(message_json,sort_keys=True, indent=4, separators=(',',':'))
@@ -98,7 +120,7 @@ class qosBroker(revent.EventMixin):
     #skipping verification for now
 
 
-    #raise event ServiceChanged (controller listens)  
+    #raise event ServiceChanged (controller listens)
     if 'time' in order:
       time = order['time']
       self.raiseEvent(ServiceChanged(ip1,ip2,level,"ADD"))
@@ -173,7 +195,7 @@ class qosBroker(revent.EventMixin):
     return self.prepareJSONString("MENU",menu,signature)
 
   def sendMenu(self,conn):
-    json_string = self.prepareMenuData('../staticp/menu.json') 
+    json_string = self.prepareMenuData('/home/joey/SDNPayments/staticp/menu.json') 
     conn.send(json_string) #send MENU message to client
 
 
@@ -215,6 +237,10 @@ class PriceStaticRequestsController(object):
       self.services[(event.ip1,event.ip2)] = 0
       
     self.updateAllFlows()
+
+
+# def _handle_Preorder(self,event):
+
 
   def updateAllFlows(self):
     self.servicesMutex.acquire()

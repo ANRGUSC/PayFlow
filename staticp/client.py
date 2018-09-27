@@ -43,7 +43,7 @@ def signData(plaintext,key):
 def prepareJSONstring(message_type, data=None, signature=None, verification=None):
     """
     Prepares the JSON message format to be sent to the Seller
-    :param message_type: HELLO/ORDER/DATA_ACK/PAYMENT_ACK/EXIT
+    :param message_type: HELLO/PREORDER/ORDER/DATA_ACK/PAYMENT_ACK/EXIT
     :param data: Corresponding data
     :param signature: Signed Data
     :param verification: Address or the transaction ID in Tangle/Blockchain
@@ -135,6 +135,18 @@ ip2 = raw_input('Enter IP2:')
 
 #prompt client for time 
 time = raw_input('Enter time (s):')
+
+#send PREORDER message to broker/controller
+checkData = {}
+checkData['ip1']=ip1
+checkData['ip2']=ip2
+checkData['level']=service
+preorder = prepareJSONstring(message_type="PREORDER",data=json.dumps(checkData))
+s.send(preorder)
+print preorder
+
+#get reply from broker/controller of PREORDER check
+
 
 
 #send records transaction to broker_payment_address (IOTA)
