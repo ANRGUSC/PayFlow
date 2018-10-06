@@ -16,6 +16,11 @@ case $1 in
 	staticp )
 		sudo python staticp/mininet_setup_staticp.py
 		;;
+	dev )
+		# gnome-terminal --working-directory=$PWD -e "sudo mn --controller remote,ip=127.0.0.1 --custom topo.py --topo mytopo"
+		# sudo python dynamicp/queue_setup.py
+		# gnome-terminal --working-directory=$PWD -e "sudo python pox/pox.py price_dynamic_payments"
+		;;
 	*)
 		echo Invalid option
 		echo Available options:

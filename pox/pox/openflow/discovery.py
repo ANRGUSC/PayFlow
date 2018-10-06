@@ -193,6 +193,8 @@ class LLDPSender (object):
     discovery_packet.tlvs.append(sysdesc)
     discovery_packet.tlvs.append(pkt.end_tlv())
 
+    print discovery_packet
+
     eth = pkt.ethernet(type=pkt.ethernet.LLDP_TYPE)
     eth.src = port_addr
     eth.dst = pkt.ETHERNET.NDP_MULTICAST
