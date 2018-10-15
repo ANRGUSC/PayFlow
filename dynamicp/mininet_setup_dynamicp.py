@@ -13,7 +13,7 @@ class POX( Controller ):
     def __init__( self, name, cdir=POXDIR,
                   command='python pox.py',
                   cargs=( 'openflow.of_01 --port=%s '
-                          'price_static_payments' ),
+                          'price_dynamic_payments openflow.discovery host_tracker' ),
                   **kwargs ):
         Controller.__init__( self, name, cdir=cdir,
                              command=command,
