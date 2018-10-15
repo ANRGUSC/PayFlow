@@ -13,12 +13,15 @@ import pox.lib.recoco as recoco               # Multitasking library
 
 from pox.messenger import *                   # Messenger library
 from pox.lib.recoco import Timer              # Timer library 
+from pox.host_tracker import host_tracker     # Host tracking library
+from pox.openflow.discovery import Discovery
 
 import threading                              # Threading library
 import socket                                 # Socket library
 import json                                   # JSON library
 import os
 import time
+from sets import Set
 
 from iota import Iota                         # IOTA library
 
@@ -75,6 +78,11 @@ class Link(object):
       self.capacity = capacity
     else:
       self.capacity = -1
+
+class Queue(object):
+  def __init__(self,queue_id,capacity):
+    self.id = queue_id
+    self.capacity = capacity
 
 class QosBroker(revent.EventMixin):
   """Class that handles all QoS payments 
@@ -210,22 +218,39 @@ class QosBroker(revent.EventMixin):
 
 
 
-class PriceDynamicRequestsController(object):
+class PriceDynamicRequestsController(revent.EventMixin):
   """Class that represents the controller in the SDN architecture
 
   """
   def __init__(self):
-    self.services = {} #ip pairing to service level 
-    self.servicesMutex = threading.Lock() 
-    #self.services = {("10.0.0.1","10.0.0.3"): 2}
-    self.connections = {} #switch name to switch object mapping eg.'s1'
-    self.dpidToSwitch = {} #switch dpid to switch object mapping 
-    self.broker = QosBroker(6113)
+    def startup():
+      self.services = {} #ip pairing to service level 
+      self.servicesMutex = threading.Lock() 
+      #self.services = {("10.0.0.1","10.0.0.3"): 2}
+      self.connections = {} #switch name to switch object mapping eg.'s1'
+      self.dpidToSwitch = {} #switch dpid to switch object mapping 
+      self.ArpTable = {} #map MAC to IP, populate using ARP
+      self.hostMACToSwitchDpid = {}
 
-    self.broker.addListeners(self)
-    core.openflow.addListeners(self)
+      self.broker = QosBroker(6113)
 
+      self.broker.addListeners(self)
+      core.openflow.addListeners(self)
 
+      core.host_tracker.addListeners(self)
+      core.openflow_discovery.addListeners(self)
+    core.call_when_ready(startup,('openflow','openflow_discovery','host_tracker'))
+
+  def _handle_HostEvent (self, event):
+    #raised when there is a host that JOINed MOVEd or LEAVEs the network
+    # if(event.join or event.move):
+    #   print event.entry
+    #   self.hostMACToSwitchDpid[event.entry.macaddr] = event.entry.dpid
+
+    if(event.join or event.move):
+      self.hostMACToSwitchDpid[event.entry.macaddr] = event.entry.dpid
+    elif(event.leave):
+      del self.hostMACToSwitchDpid[event.entry.macaddr]
   def _handle_ConnectionUp(self,event):
     ports = [] #ports that the connected switch has
     for port in event.connection.features.ports:
@@ -305,7 +330,7 @@ class PriceDynamicRequestsController(object):
       #when we find a link between two switches, we insert {neighbour switch indentifer, new link object} into the map
 
       self.dpidToSwitch[originatorDPID].adjacent[self.dpidToSwitch[forwarderDPID].identifier] = Link(self.dpidToSwitch[originatorDPID],self.dpidToSwitch[forwarderDPID])
-      self.dpidToSwitch[forwarderDPID].adjacent[self.dpidToSwitch[originatorDPID].identifier] = Link(self.dpidToSwitch[forwarderDPID],self.dpidToSwitch[originatorDPID  ])
+      self.dpidToSwitch[forwarderDPID].adjacent[self.dpidToSwitch[originatorDPID].identifier] = Link(self.dpidToSwitch[forwarderDPID],self.dpidToSwitch[originatorDPID ])
 
       print "switch dpid: " + originatorDPID + " has: "
       print self.dpidToSwitch[originatorDPID].adjacent
@@ -314,7 +339,7 @@ class PriceDynamicRequestsController(object):
 
     else:
       #routing
-      print "got non LLDP nooo"
+      print "got a non LLDP packet"
 
     
 
@@ -325,30 +350,48 @@ class PriceDynamicPaymentsSwitch(object):
   """
   def __init__(self,connection,identifier,dpid,ports):
     self.connection = connection
-    self.arpTable = {} #maps ip address to an ArpEntry class
     self.adjacent = {}
     self.identifier = identifier #eg "s1" or "s2"
     self.dpid = dpid 
     self.ports = ports
     self.discoveryPackets = {}
-    self.unusedQueues = [] #fifo
+    self.portsToUnusedQueues = {}
 
     connection.addListeners(self)
 
 
-    #Create a discovery packet for each port on this switch then create an openflow output packet with discovery packet as data
     for port_num, port_addr in self.ports:
-      #print "NUMBER: " +  str(port_num) 
-      #print port_addr
+      #1.Create a discovery packet for each port on this switch then create an openflow output packet with discovery packet as data
       discovery_packet = self.create_discovery_packet(self.dpid, port_num, port_addr,120)
       self.discoveryPackets[port_num] = self.create_packet_out(discovery_packet, port_num)
       print("discovery packet created for dpid: " + str(self.dpid) + " port:" + str(port_num) + " port addr:" + str(port_addr))
 
-    #TODO:
+      #2.Create a list of queues for all ports
+      self.portsToUnusedQueues[port_num] = {}
+
+      #STATIC FOR NOW. SHOULD FILL USING DATA FROM OPENVSWITCHDB 
+      #STATIC QUEUES:
+      #q0,q1: level3 = 250MBit/s
+      #q2,q3: level2 = 150MBit/s
+      #q4,q5: level1 = 100MBit/s
+      #q6: level0 = 50MBit/s
+      queues = [(0,250000000),(1,250000000),(2,150000000),(3,150000000),(4,100000000),(5,100000000),(6,50000000)]
+      for queue_id, queue_capacity in queues:
+        if(queue_capacity not in self.portsToUnusedQueues[port_num]):
+          self.portsToUnusedQueues[port_num][queue_capacity] = []
+        self.portsToUnusedQueues[port_num][queue_capacity].append(Queue(queue_id,queue_capacity))  
+
     #Send discovery packet on a timer. send all every 1 second for now
     Timer(1,self.send_all_discovery_ofp,args=[],recurring=True)     
 
-
+  def hasQueueWithCapacity(self,port,capacity):
+    if(queue_capacity not in self.portsToUnusedQueues[port_num]):
+      return False
+    else:
+      if(len(self.portsToUnusedQueues[port_num][queue_capacity]) == 0):
+        return False
+      else:
+        return True
 
 
   def flood(self,priority,idle,hard,classifier):
@@ -462,10 +505,6 @@ class PriceDynamicPaymentsSwitch(object):
       self.send_discovery_ofp(port_num)
     print "sent all on switch with dpid: " + str(self.dpid) 
 
-  def _handle_PacketIn(self,event):
-    print "switch packet in"
-
-
   def updateFlows(self,services):
     #update flows based on QoS database (only s1 for now since it's the only one with queues)
     if(self.identifier == "s1"):
@@ -534,6 +573,8 @@ def launch ():
 
   core.addListenerByName("UpEvent", _go_up)
 
+
   core.registerNew(PriceDynamicRequestsController)  
+
 
 

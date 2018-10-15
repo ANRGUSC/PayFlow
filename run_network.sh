@@ -3,6 +3,7 @@
 sudo fuser -k 6653/tcp #openflow
 sudo fuser -k 6633/tcp #openflow
 sudo fuser -k 7790/tcp #messenger
+sudo fuser -k 6113/tcp #broker
 
 sudo mn -c #mininet
 
@@ -19,7 +20,7 @@ case $1 in
 	dev )
 		# gnome-terminal --working-directory=$PWD -e "sudo mn --controller remote,ip=127.0.0.1 --custom topo.py --topo mytopo"
 		# sudo python dynamicp/queue_setup.py
-		# gnome-terminal --working-directory=$PWD -e "sudo python pox/pox.py price_dynamic_payments"
+		# gnome-terminal --working-directory=$PWD -e "sudo python pox/pox.py price_dynamic_payments openflow.discovery host_tracker"
 		;;
 	*)
 		echo Invalid option
