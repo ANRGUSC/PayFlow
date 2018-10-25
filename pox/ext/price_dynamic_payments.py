@@ -13,6 +13,7 @@ import pox.lib.recoco as recoco               # Multitasking library
 
 from pox.messenger import *                   # Messenger library
 from pox.lib.recoco import Timer              # Timer library 
+from pox.lib.packet.ipv4 import ipv4
 from pox.host_tracker import host_tracker     # Host tracking library
 from pox.openflow.discovery import Discovery
 
@@ -352,10 +353,12 @@ class PriceDynamicPaymentsSwitch(object):
     self.connection = connection
     self.adjacent = {}
     self.identifier = identifier #eg "s1" or "s2"
+    self.arpTable = {}
     self.dpid = dpid 
     self.ports = ports
     self.discoveryPackets = {}
     self.portsToUnusedQueues = {}
+
 
     connection.addListeners(self)
 
@@ -422,6 +425,26 @@ class PriceDynamicPaymentsSwitch(object):
     msg.hard_timeout = hard
     msg.match.dl_type = classifier
     msg.match.nw_dst = dstIP
+    msg.actions.append(of.ofp_action_output(port=port))
+    self.connection.send(msg)
+
+  def enqueue_mac(self,priority,idle,hard,classifier,dstMAC,port,queue,srcMAC=None,data=None):
+    msg = of.ofp_flow_mod()
+    msg.data = data
+    msg.priority = priority
+    msg.idle_timeout = idle
+    msg.hard_timeout = hard
+    msg.match = of.ofp_match(dl_dst = dstMAC)
+    msg.actions.append(of.ofp_action_enqueue(port=port, queue_id=queue))
+    self.connection.send(msg)
+
+  def output_mac(self,priority,idle,hard,classifier,dstMAC,port,data=None):
+    msg = of.ofp_flow_mod()
+    msg.data = data
+    msg.priority = priority
+    msg.idle_timeout = idle
+    msg.hard_timeout = hard
+    msg.match = of.ofp_match(dl_dst = dstMAC)
     msg.actions.append(of.ofp_action_output(port=port))
     self.connection.send(msg)
 
@@ -526,7 +549,74 @@ class PriceDynamicPaymentsSwitch(object):
     else: 
       print "not s1 so not updating!"
 
-    
+  def resend_packet (self, packet_in, out_port):
+    log.debug("Resending Packet on requested port")
+    msg = of.ofp_packet_out()
+    msg.data = packet_in
+
+    # Add an action to send to the specified port
+    action = of.ofp_action_output(port = out_port)
+    msg.actions.append(action)
+
+    # Send message to switch
+    self.connection.send(msg)
+
+
+  def act_like_switch (self, event, packet, packet_in):
+
+    # Learn the port for the source MAC
+    # self.arpTable ... <add or update entry
+    dpid = event.connection.dpid
+    log.debug("Entering arp for DPID:")
+    if dpid not in self.arpTable:
+      # New switch -- create an empty table
+      self.arpTable[dpid] = {}
+
+    out_port = None
+    if packet.src not in self.arpTable[dpid]:
+      self.arpTable[dpid][packet.src] = packet_in.in_port
+      log.debug("Added Entry into ARP:")
+      
+    if packet.dst in self.arpTable[dpid]:
+      out_port = self.arpTable[dpid][packet.dst]
+    # if the port associated with the destination MAC of the packet is known:
+    if out_port is not None:
+      # Send packet out the associated port
+      log.debug("Entry found in ARP...Unicasting")
+      if self.identifier == "s1":
+        self.enqueue_mac(10,0,0,0x0800,packet.dst,out_port,self.getQueueId(out_port,0),packet.src,packet_in)
+      else:
+        #self.resend_packet(packet_in,out_port)
+        self.output_mac(10,0,0,0x0800,packet.dst,out_port,packet_in)
+
+      """log.debug("Installing flow...")
+
+      msg = of.ofp_flow_mod()
+      msg.match = of.ofp_match(dl_dst = packet.dst)
+      msg.idle_timeout = 0
+      msg.hard_timeout = 0
+      action = of.ofp_action_output(port = out_port)
+      msg.actions.append(action)
+
+      self.connection.send(msg)"""
+
+    else:
+      # Flood the packet out everything but the input port
+      log.debug("Flooding ARP")
+      #self.flood(1,0,0,0x0806,packet_in)
+      self.resend_packet(packet_in, of.OFPP_ALL)
+
+  def _handle_PacketIn(self,event):
+    #enqueue all IP packets into default queue (queue2) to start
+    #floop all APR
+    packet = event.parsed
+    packet_in = event.ofp
+    if not packet.parsed:
+      log.warning("Ignoring unparsed packet")
+      return
+    self.act_like_switch(event, packet, packet_in)
+    #self.initStaticRoute()
+
 
 
 
