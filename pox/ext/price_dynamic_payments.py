@@ -406,27 +406,6 @@ class PriceDynamicPaymentsSwitch(object):
     msg.actions.append(of.ofp_action_output(port=of.OFPP_ALL))  
     self.connection.send(msg)
 
-  def enqueue(self,priority,idle,hard,classifier,dstIP,port,queue,srcIP=None):
-    msg = of.ofp_flow_mod()
-    msg.priority = priority
-    msg.idle_timeout = idle
-    msg.hard_timeout = hard
-    msg.match.dl_type = classifier
-    msg.match.nw_dst = dstIP
-    if srcIP is not None:
-      msg.match.nw_src = srcIP
-    msg.actions.append(of.ofp_action_enqueue(port=port, queue_id=queue))
-    self.connection.send(msg)
-
-  def output(self,priority,idle,hard,classifier,dstIP,port):
-    msg = of.ofp_flow_mod()
-    msg.priority = priority
-    msg.idle_timeout = idle
-    msg.hard_timeout = hard
-    msg.match.dl_type = classifier
-    msg.match.nw_dst = dstIP
-    msg.actions.append(of.ofp_action_output(port=port))
-    self.connection.send(msg)
 
   def enqueue_mac(self,priority,idle,hard,classifier,dstMAC,port,queue,srcMAC=None,data=None):
     msg = of.ofp_flow_mod()
