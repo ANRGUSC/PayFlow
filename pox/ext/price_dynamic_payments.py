@@ -10,6 +10,8 @@ from pox.lib.addresses import EthAddr, IPAddr # Address types
 import pox.lib.util as poxutil                # Various util functions
 import pox.lib.revent as revent               # Event library
 import pox.lib.recoco as recoco               # Multitasking library
+from pox.lib.packet.arp import arp
+from pox.lib.packet.ethernet import ethernet
 
 from pox.messenger import *                   # Messenger library
 from pox.lib.recoco import Timer              # Timer library 
@@ -23,6 +25,7 @@ import json                                   # JSON library
 import os
 import time
 from sets import Set
+import heapq
 
 from iota import Iota                         # IOTA library
 
@@ -33,15 +36,21 @@ from Crypto.Cipher import AES
 
 ARP_TIMEOUT = 60*2
 
+levelToCapacity = {'level0': 50000000,
+                   'level1': 100000000,
+                   'level2': 150000000,
+                   'level3': 250000000
+                  }
+
 # Create a logger for this component
 log = core.getLogger()    
 
 class ServiceChanged(revent.Event):
   """Event raised by QosBroker when there is a change in service levels. 
 
-  Opcodes:
-    ADD - add a service between ip1 and ip2
-    REMOVE - remove the service between ip1 and ip2 
+    Opcodes:
+      ADD - add a service between ip1 and ip2
+      REMOVE - remove the service between ip1 and ip2 
 
   """
   def __init__(self,ip1,ip2,level,opcode):
@@ -50,7 +59,6 @@ class ServiceChanged(revent.Event):
     self.ip2 = ip2
     self.level = level
     self.opcode = opcode
-
 
 class ArpEntry(object):
   """Copyright 2011 James McCauley
@@ -71,15 +79,6 @@ class ArpEntry(object):
     return time.time() > self.timeout
 
 
-class Link(object):
-  def __init__(self,s1,s2,capacity=None):
-    self.s1 = s1
-    self.s2 = s2
-    if(capacity is not None):
-      self.capacity = capacity
-    else:
-      self.capacity = -1
-
 class Queue(object):
   def __init__(self,queue_id,capacity):
     self.id = queue_id
@@ -93,7 +92,10 @@ class QosBroker(revent.EventMixin):
   _eventMixin_events = set([
     ServiceChanged,
     ])
-  def __init__(self,port):
+  def __init__(self,port,controller):
+    self.controller = controller
+    self.controller.addListeners(self)
+
     client = 'http://node02.iotatoken.nl:14265' #Look on www.iotatoken.nl for downtime announcements and real time info
     seed = ''
     #initialize IOTA API
@@ -125,29 +127,50 @@ class QosBroker(revent.EventMixin):
     message_json = json.loads(conn.recv(2048))
     print json.dumps(message_json,sort_keys=True, indent=4, separators=(',',':'))
 
-    #read ORDER and verify on IOTA network that client payed (optional)
-    payment_id = message_json['verification']
-    signature = message_json['signature']
-    order = message_json['data']
-    order = json.loads(order)
-    level = order['level']
-    buyer_address = order['address']
-    buyer_key = order['public-key']
-    ip1 = order['ip1']
-    ip2 = order['ip2']
+    if(message_json['message_type'] == 'PREORDER'):
+      print "GOT PREORDER"
+      preorder = message_json['data']
+      preorder = json.loads(preorder)
+      level = preorder['level']
+      ip1 = preorder['ip1']
+      ip2 = preorder['ip2'] 
 
-    #skipping verification for now
+      result = self.controller.preorder(ip1,ip2,level)
+
+      print "PREORDER RESULT: " + str(result)
+
+      if(result):
+        self.sendPreorderResponse(conn,"TRUE")
+      else:
+        self.sendPreorderResponse(conn,"FALSE")
 
 
-    #raise event ServiceChanged (controller listens)  
-    if 'time' in order:
-      time = order['time']
-      self.raiseEvent(ServiceChanged(ip1,ip2,level,"ADD"))
-      Timer(int(time),self.raiseEvent,args=[ServiceChanged(ip1,ip2,level,"REMOVE")]) 
 
-    else:
-      self.raiseEvent(ServiceChanged(ip1,ip2,level,"ADD"))
 
+
+    elif(message_json['message_type'] == 'ORDER'):
+      print "GOT ORDER"
+      #read ORDER and verify on IOTA network that client payed (optional)
+      payment_id = message_json['verification']
+      signature = message_json['signature']
+      order = message_json['data']
+      order = json.loads(order)
+      level = order['level']
+      buyer_address = order['address']
+      buyer_key = order['public-key']
+      ip1 = order['ip1']
+      ip2 = order['ip2']
+
+      #skipping verification for now
+
+      #raise event ServiceChanged (controller listens)  
+      if 'time' in order:
+        time = order['time']
+        self.raiseEvent(ServiceChanged(ip1,ip2,level,"ADD"))
+        Timer(int(time),self.raiseEvent,args=[ServiceChanged(ip1,ip2,level,"REMOVE")]) 
+
+      else:
+        self.raiseEvent(ServiceChanged(ip1,ip2,level,"ADD"))
 
   def serverThread(self,server):
     while True:
@@ -213,9 +236,23 @@ class QosBroker(revent.EventMixin):
     signature = self.signData(menu)
     return self.prepareJSONString("MENU",menu,signature)
 
+  def preparePreorderResponse(self,result,file):
+    with open(file) as preorderrFile:
+      preorderr = preorderrFile.read()
+      preorderr = json.loads(preorderr)
+
+      preorderr['result'] = result
+      preorderr = json.dumps(preorderr)
+      signature = self.signData(preorderr)
+      return self.prepareJSONString("PREORDERR",preorderr,signature)
+
   def sendMenu(self,conn):
-    json_string = self.prepareMenuData('../staticp/menu.json') 
+    json_string = self.prepareMenuData('../dynamicp/menu.json') 
     conn.send(json_string) #send MENU message to client
+
+  def sendPreorderResponse(self,conn,result):
+    json_string = self.preparePreorderResponse(result,'../dynamicp/preorderr.json')
+    conn.send(json_string)
 
 
 
@@ -223,6 +260,7 @@ class PriceDynamicRequestsController(revent.EventMixin):
   """Class that represents the controller in the SDN architecture
 
   """
+
   def __init__(self):
     def startup():
       self.services = {} #ip pairing to service level 
@@ -230,16 +268,16 @@ class PriceDynamicRequestsController(revent.EventMixin):
       #self.services = {("10.0.0.1","10.0.0.3"): 2}
       self.connections = {} #switch name to switch object mapping eg.'s1'
       self.dpidToSwitch = {} #switch dpid to switch object mapping 
-      self.ArpTable = {} #map MAC to IP, populate using ARP
       self.hostMACToSwitchDpid = {}
+      self.arpTable = {} #ip to mac of known hosts 
 
-      self.broker = QosBroker(6113)
+      self.broker = QosBroker(6113,self)
 
       self.broker.addListeners(self)
-      core.openflow.addListeners(self)
 
       core.host_tracker.addListeners(self)
       core.openflow_discovery.addListeners(self)
+      core.openflow.addListeners(self)
     core.call_when_ready(startup,('openflow','openflow_discovery','host_tracker'))
 
   def _handle_HostEvent (self, event):
@@ -249,9 +287,10 @@ class PriceDynamicRequestsController(revent.EventMixin):
     #   self.hostMACToSwitchDpid[event.entry.macaddr] = event.entry.dpid
 
     if(event.join or event.move):
-      self.hostMACToSwitchDpid[event.entry.macaddr] = event.entry.dpid
+      print event.entry
+      self.hostMACToSwitchDpid[str(event.entry.macaddr)] = int(event.entry.dpid)
     elif(event.leave):
-      del self.hostMACToSwitchDpid[event.entry.macaddr]
+      del self.hostMACToSwitchDpid[str(event.entry.macaddr)]
   def _handle_ConnectionUp(self,event):
     ports = [] #ports that the connected switch has
     for port in event.connection.features.ports:
@@ -262,18 +301,8 @@ class PriceDynamicRequestsController(revent.EventMixin):
 
     ports = [(p.port_no, p.hw_addr) for p in event.ofp.ports]
 
-    self.connections[switch] = PriceDynamicPaymentsSwitch(event.connection,switch,event.dpid,ports)
-    self.dpidToSwitch[str(event.dpid)] = self.connections[switch]
-
-
-    #Send all LLDP traffic to the controller
-    #Copyright 2011 James McCauley 
-    match = of.ofp_match(dl_type = pkt.ethernet.LLDP_TYPE, dl_dst = pkt.ETHERNET.NDP_MULTICAST)
-    msg = of.ofp_flow_mod()
-    msg.priority = 65000
-    msg.match = match
-    msg.actions.append(of.ofp_action_output(port = of.OFPP_CONTROLLER))
-    event.connection.send(msg)
+    self.connections[switch] = PriceDynamicPaymentsSwitch(event.connection,switch,event.dpid,ports,self)
+    self.dpidToSwitch[int(event.dpid)] = self.connections[switch]
 
 
   def _handle_ServiceChanged(self,event):
@@ -286,88 +315,118 @@ class PriceDynamicRequestsController(revent.EventMixin):
       
     self.updateAllFlows()
 
+  def preorder(self,ip1,ip2,level):
+    print "handling preorder"
+
+    print "IP ONE: " + str(ip1)
+    print "IP TWO: " + str(ip2)
+
+    if((ip1 not in self.arpTable) or (ip2 not in self.arpTable)):
+      print "one of the PREORDER IP addresses is not in ARP Table"
+      print self.arpTable
+      return False
+
+    mac1 = self.arpTable[ip1]
+    mac2 = self.arpTable[ip2]
+
+    if((mac1 not in self.hostMACToSwitchDpid) or (mac2 not in self.hostMACToSwitchDpid)):
+      print "one of the PREORDER MAC addresses is not in the host discovery table"
+      print self.hostMACToSwitchDpid
+      return False
+
+    endSwitch1Dpid = self.hostMACToSwitchDpid[mac1]
+    endSwitch2Dpid = self.hostMACToSwitchDpid[mac2]
+
+    print "IMPORTANTTTTTT:"
+    print "mac ONE: " + str(mac1)
+    print "mac TWO: " + str(mac2)
+    print "SWITCH ATTACHED TO MAC ONE DPID:" + str(endSwitch1Dpid)
+    print "SWITCH ATTACHED TO MAC TWO DPID:" + str(endSwitch2Dpid)
+    print "END"
+
+    return self.RunRouteSearch(endSwitch1Dpid,endSwitch2Dpid,levelToCapacity[level])
+
+
+  def RunRouteSearch(self,s1dpid,s2dpid,capacity):
+    #return true or false 
+    #DFS
+
+    #self.dpidToSwitch[s1dpid].adjacent[port] => list of tuples (neighbour switch dpid, neighbour switch port)
+
+    for k,v in self.dpidToSwitch.items(): 
+      print "dpid:" + str(k)
+      print "adjacent:" 
+      print v.adjacent
+     
+
+    visited = Set([s1dpid])
+    
+
+    return self.RunRouteSearchHelper(s1dpid,s2dpid,visited,capacity)
+
+  def RunRouteSearchHelper(self,currentDpid,endDpid,visited,capacity):
+    if(currentDpid == endDpid):
+      return True
+
+    currentSwitch = self.dpidToSwitch[currentDpid]
+    found = False
+    for port,links in currentSwitch.adjacent.items():
+      for link in links:
+        if link[0] not in visited:
+          visited.add(link[0])  
+          if (currentSwitch.hasQueueWithCapacity(port,capacity)) and (self.dpidToSwitch[link[0]].hasQueueWithCapacity(link[1],capacity)):
+            found = found or self.RunRouteSearchHelper(link[0],endDpid,visited,capacity)
+
+    return found
+
   def updateAllFlows(self):
     self.servicesMutex.acquire()
     for k,v in self.connections.items():
       v.updateFlows(self.services)
     self.servicesMutex.release()
 
-  def _handle_PacketIn (self,event):
-    print "controller packet in"
-    packet = event.parsed
+  def _handle_LinkEvent(self,event):
+    link = event.link
+    dpid1 = link.dpid1 #int
+    dpid2 = link.dpid2
+    port1 = link.port1
+    port2 = link.port2
 
-    if((packet.effective_ethertype == pkt.ethernet.LLDP_TYPE) and (packet.dst == pkt.ETHERNET.NDP_MULTICAST)):
-      #LLDP
-      print "GOT LDDP YEEEEEEE"
-      lldph = packet.find(pkt.lldp)
+    print "dpid1:" + str(dpid1)
+    print "dpid2:" + str(dpid2)
+    print "port1" + str(port1)
+    print "port2" + str(port2)
 
-      #Copyright 2011-2013 James McCauley
-      def lookInSysDesc ():
-        r = None
-        for t in lldph.tlvs[3:]:
-          if t.tlv_type == pkt.lldp.SYSTEM_DESC_TLV:
-            # This is our favored way...
-            for line in t.payload.split('\n'):
-              if line.startswith('dpid:'):
-                try:
-                  return int(line[5:], 16)
-                except:
-                  pass
-            if len(t.payload) == 8:
-              # Maybe it's a FlowVisor LLDP...
-              # Do these still exist?
-              try:
-                return struct.unpack("!Q", t.payload)[0]
-              except:
-                pass
-            return None
+    if(port1 not in self.dpidToSwitch[dpid1].adjacent):
+      self.dpidToSwitch[dpid1].adjacent[port1] = []
+    if(port2 not in self.dpidToSwitch[dpid2].adjacent):
+      self.dpidToSwitch[dpid2].adjacent[port2] = []
 
-      originatorDPID = str(lookInSysDesc())
-      forwarderDPID = str(event.connection.dpid)
-      print "originatorDPID: " + originatorDPID
-      print "forwarderDPID: " + forwarderDPID
+    #do not append both directions because other direction will have a corresponding LinkEvent
+    self.dpidToSwitch[dpid1].adjacent[port1].append((dpid2,port2))
 
-      #switch object has a map that maps neighbour switch identifiers eg "s1","s2" to a link class that contains both switch objects
-      #when we find a link between two switches, we insert {neighbour switch indentifer, new link object} into the map
-
-      self.dpidToSwitch[originatorDPID].adjacent[self.dpidToSwitch[forwarderDPID].identifier] = Link(self.dpidToSwitch[originatorDPID],self.dpidToSwitch[forwarderDPID])
-      self.dpidToSwitch[forwarderDPID].adjacent[self.dpidToSwitch[originatorDPID].identifier] = Link(self.dpidToSwitch[forwarderDPID],self.dpidToSwitch[originatorDPID ])
-
-      print "switch dpid: " + originatorDPID + " has: "
-      print self.dpidToSwitch[originatorDPID].adjacent
-      print "switch dpid: " + forwarderDPID + " has: "
-      print self.dpidToSwitch[forwarderDPID].adjacent
-
-    else:
-      #routing
-      print "got a non LLDP packet"
-
-    
 
 
 class PriceDynamicPaymentsSwitch(object):
   """Class that represents indivisual switches on the SDN. Instantiated once when a switch is discovered.
 
   """
-  def __init__(self,connection,identifier,dpid,ports):
+  def __init__(self,connection,identifier,dpid,ports,controller):
     self.connection = connection
     self.adjacent = {}
     self.identifier = identifier #eg "s1" or "s2"
-    self.arpTable = {}
+    self.forwardingTable = {}
     self.dpid = dpid 
-    self.ports = ports
+    self.ports = ports #tuple that contains (port_num, port_addr)
     self.discoveryPackets = {}
     self.portsToUnusedQueues = {}
+    self.controller = controller
 
 
     connection.addListeners(self)
 
-
     for port_num, port_addr in self.ports:
-      #1.Create a discovery packet for each port on this switch then create an openflow output packet with discovery packet as data
-      discovery_packet = self.create_discovery_packet(self.dpid, port_num, port_addr,120)
-      self.discoveryPackets[port_num] = self.create_packet_out(discovery_packet, port_num)
-      print("discovery packet created for dpid: " + str(self.dpid) + " port:" + str(port_num) + " port addr:" + str(port_addr))
+      self.adjacent[int(port_num)] = []
 
       #2.Create a list of queues for all ports
       self.portsToUnusedQueues[port_num] = {}
@@ -384,14 +443,12 @@ class PriceDynamicPaymentsSwitch(object):
           self.portsToUnusedQueues[port_num][queue_capacity] = []
         self.portsToUnusedQueues[port_num][queue_capacity].append(Queue(queue_id,queue_capacity))  
 
-    #Send discovery packet on a timer. send all every 1 second for now
-    Timer(1,self.send_all_discovery_ofp,args=[],recurring=True)     
 
   def hasQueueWithCapacity(self,port,capacity):
-    if(queue_capacity not in self.portsToUnusedQueues[port_num]):
+    if(capacity not in self.portsToUnusedQueues[port]):
       return False
     else:
-      if(len(self.portsToUnusedQueues[port_num][queue_capacity]) == 0):
+      if(len(self.portsToUnusedQueues[port][capacity]) == 0):
         return False
       else:
         return True
@@ -473,61 +530,6 @@ class PriceDynamicPaymentsSwitch(object):
 
     return (port-1)*7 + (6-2*level) + queueNumber
 
-  def create_discovery_packet (self, dpid, port_num, port_addr,ttl):
-    """
-    Build discovery packet
-    Copyright 2011 James McCauley 
-    TTL: time in seconds for which receiver should consider LLDP packet valid
-    """
-
-    chassis_id = pkt.chassis_id(subtype=pkt.chassis_id.SUB_LOCAL)
-    chassis_id.id = bytes('dpid:' + hex(long(dpid))[2:-1])
-    # Maybe this should be a MAC.  But a MAC of what?  Local port, maybe?
-
-    #print "hello" + chassis_id.id
-
-    port_id = pkt.port_id(subtype=pkt.port_id.SUB_PORT, id=str(port_num))
-
-    ttl = pkt.ttl(ttl = ttl)
-
-    sysdesc = pkt.system_description()
-    sysdesc.payload = bytes('dpid:' + hex(long(dpid))[2:-1])
-
-    #print "hello" + sysdesc.payload
-
-    discovery_packet = pkt.lldp()
-    discovery_packet.tlvs.append(chassis_id)
-    discovery_packet.tlvs.append(port_id)
-    discovery_packet.tlvs.append(ttl)
-    discovery_packet.tlvs.append(sysdesc)
-    discovery_packet.tlvs.append(pkt.end_tlv())
-
-    #print discovery_packet
-
-    eth = pkt.ethernet(type=pkt.ethernet.LLDP_TYPE)
-    eth.src = port_addr
-    eth.dst = pkt.ETHERNET.NDP_MULTICAST
-    eth.payload = discovery_packet
-
-    #print "this is the fucking packet: " + str(eth.payload)
-    return(eth)
-
-  def create_packet_out (self, discovery, port):
-    """
-    Create an ofp_packet_out containing a discovery packet
-    """
-    po = of.ofp_packet_out(action = of.ofp_action_output(port=port))
-    po.data = discovery.pack()
-    return po.pack()
-
-  def send_discovery_ofp(self, port):
-    core.openflow.sendToDPID(self.dpid, self.discoveryPackets[port])
-
-  def send_all_discovery_ofp(self):
-    for port_num, port_addr in self.ports:
-      self.send_discovery_ofp(port_num)
-    print "sent all on switch with dpid: " + str(self.dpid) 
-
   def updateFlows(self,services):
     #update flows based on QoS database (only s1 for now since it's the only one with queues)
     if(self.identifier == "s1"):
@@ -565,20 +567,46 @@ class PriceDynamicPaymentsSwitch(object):
   def act_like_switch (self, event, packet, packet_in):
 
     # Learn the port for the source MAC
-    # self.arpTable ... <add or update entry
+    # self.forwardingTable ... <add or update entry
+
+    if packet.type == ethernet.LLDP_TYPE: # Ignore LLDP packets
+      return
+    #if it's not an IP or ARP packet, ignore
+    #there were problems forwarding packets that discovery/host tracker module used 
+    #caused hosts to "move" around the network because the packets are not being dropped
+    #should probably check if it's a discovery packet, if so drop however doing this for now
+    if (packet.type != packet.ARP_TYPE) and (packet.type != packet.IP_TYPE):
+      return
+
     dpid = event.connection.dpid
     log.debug("Entering arp for DPID:")
-    if dpid not in self.arpTable:
+    if dpid not in self.forwardingTable:
       # New switch -- create an empty table
-      self.arpTable[dpid] = {}
+      self.forwardingTable[dpid] = {}
 
     out_port = None
-    if packet.src not in self.arpTable[dpid]:
-      self.arpTable[dpid][packet.src] = packet_in.in_port
+    if packet.src not in self.forwardingTable[dpid]:
+      self.forwardingTable[dpid][packet.src] = packet_in.in_port
       log.debug("Added Entry into ARP:")
+
+    
+    if packet.type==packet.ARP_TYPE:
+      a = packet.next
+      if a.prototype == arp.PROTO_TYPE_IP:
+        if a.hwtype == arp.HW_TYPE_ETHERNET:
+          if a.protosrc != 0:
+
+            # Learn or update port/MAC info
+            if a.protosrc not in self.controller.arpTable:
+              self.controller.arpTable[str(a.protosrc)] = str(packet.src) 
+
+
+    # print "ARP TABLE:"
+    # print self.controller.arpTable
+    # print "END OF ARP TABLE"  
       
-    if packet.dst in self.arpTable[dpid]:
-      out_port = self.arpTable[dpid][packet.dst]
+    if packet.dst in self.forwardingTable[dpid]:
+      out_port = self.forwardingTable[dpid][packet.dst]
     # if the port associated with the destination MAC of the packet is known:
     if out_port is not None:
       # Send packet out the associated port
@@ -607,15 +635,16 @@ class PriceDynamicPaymentsSwitch(object):
       self.resend_packet(packet_in, of.OFPP_ALL)
 
   def _handle_PacketIn(self,event):
+    #print "switch packet in "
     #enqueue all IP packets into default queue (queue2) to start
-    #floop all APR
+    #floop all ARP
     packet = event.parsed
     packet_in = event.ofp
     if not packet.parsed:
       log.warning("Ignoring unparsed packet")
       return
     self.act_like_switch(event, packet, packet_in)
-    #self.initStaticRoute()
+    # self.initStaticRoute()
 
 
 

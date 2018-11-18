@@ -118,53 +118,74 @@ broker_public_key = RSA.importKey(data_json['broker-public-key'])
 menu_json = data_json['menu']
 #menu_json = json.loads(menu)
 
+
+#NEW CODE FOR PREORDER:
+request = raw_input('PREORDER/ORDER (p/o):')
+
 #prompt client for service level selection
 serviceSelected = False
 while not serviceSelected:
-	service = raw_input('Input requested service level (level0,level1,level2 etc.):')
-	if(service == 'level0'):
-		print "level0 is free"
-		continue
-	confirm = raw_input('The price is ' + menu_json[str(service)] + ' per second . Is this OK? (y/n):')
-	if(confirm == 'y'):
-		serviceSelected = True
+    service = raw_input('Input requested service level (level0,level1,level2 etc.):')
+    if(service == 'level0'):
+        print "level0 is free"
+        continue
+    confirm = raw_input('The price is ' + menu_json[str(service)] + ' per second . Is this OK? (y/n):')
+    if(confirm == 'y'):
+        serviceSelected = True
 
 #prompt client for ip pair
 ip1 = raw_input('Enter IP1:')
 ip2 = raw_input('Enter IP2:')
 
-#prompt client for time 
-time = raw_input('Enter time (s):')
+if(request == 'p'):
+    with open('preorder.json') as preorderFile:
+        preorderData = preorderFile.read()
+        preorderData = json.loads(preorderData)
+
+    preorderData['level'] = service
+    preorderData['ip1'] = ip1
+    preorderData['ip2'] = ip2 
+
+    preorder = prepareJSONstring(message_type="PREORDER", data=json.dumps(preorderData))
+    s.send(preorder)
+    print preorder
+
+    message_json = json.loads(s.recv(2048)) #receive PREORDERR
+    print json.dumps(message_json, sort_keys=True, indent=4, separators=(',',':')) #pretty print received PREORDERR message
 
 
-#send records transaction to broker_payment_address (IOTA)
-message = service + ' ' + ip1 + ' ' + ip2 + ' ' + time + 's'
-message_signature = signData(message,signature_key)
-tx_id = prepareTransaction(api,broker_payment_address,str(message))
+elif(request == 'o'):
+    #prompt client for time 
+    time = raw_input('Enter time (s):')
 
-print "records tx_id: " + tx_id
+    #send records transaction to broker_payment_address (IOTA)
+    message = service + ' ' + ip1 + ' ' + ip2 + ' ' + time + 's'
+    message_signature = signData(message,signature_key)
+    tx_id = prepareTransaction(api,broker_payment_address,str(message))
 
-#send payment
-#price = menu_json[service]
+    print "records tx_id: " + tx_id
 
-#setting price to 0 for testing. otherwise would need to send money to wallet
-price = 0
+    #send payment
+    #price = menu_json[service]
 
-tx_id = prepareTransaction(api=api,address=broker_payment_address,value=int(price))
-print "payment tx_id: " + str(tx_id)
+    #setting price to 0 for testing. otherwise would need to send money to wallet
+    price = 0
+
+    tx_id = prepareTransaction(api=api,address=broker_payment_address,value=int(price))
+    print "payment tx_id: " + str(tx_id)
 
 
-#send ORDER message to broker/controller 
-with open('order.json') as orderFile:
-	orderData = orderFile.read()
-	orderData = json.loads(orderData)
+    #send ORDER message to broker/controller 
+    with open('order.json') as orderFile:
+    	orderData = orderFile.read()
+    	orderData = json.loads(orderData)
 
-orderData['level'] = service
-orderData['ip1'] = ip1
-orderData['ip2'] = ip2 
-orderData['time'] = time
+    orderData['level'] = service
+    orderData['ip1'] = ip1
+    orderData['ip2'] = ip2 
+    orderData['time'] = time
 
-order = prepareJSONstring(message_type="ORDER",data=json.dumps(orderData),verification=tx_id)
-s.send(order)
-print order
+    order = prepareJSONstring(message_type="ORDER",data=json.dumps(orderData),verification=tx_id)
+    s.send(order)
+    print order
 
