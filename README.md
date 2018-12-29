@@ -12,8 +12,10 @@ See document folder for the paper describing PayFlow
  
 ## Directory Structure
 /pox/ext
+
 	Directory containing controller code
 /dynamicp
+
 	- client.py
 	Client code for making QoS requests
 	- queue_setup.py
