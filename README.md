@@ -1,12 +1,12 @@
 
-# SDN Payments
-SDN Payments is a forwarding system that provides QoS (Quality of Service) to hosts based on a payments system. It uses the POX controller and OpenVSwitch for switches. 
+# PayFlow
+PayFlow provides QoS (Quality of Service) in the form of bandwidth reservations to hosts in an OpenFlow-based software-defined network in return for micropayments. It uses the POX controller and OpenVSwitch for switches. 
 
 ## Protocol
-[Protocol paper](https://www.overleaf.com/read/ysjskmygpvmj)
+See document folder for the paper describing PayFlow
+
 
 ## Dependencies
-
  1. Mininet (2.2.2 confirmed working) 
  2. OpenVSwitch (2.9.0 confirmed working)
 
