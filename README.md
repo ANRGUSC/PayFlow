@@ -9,6 +9,18 @@ See document folder for the paper describing PayFlow
 ## Dependencies
  1. Mininet (2.2.2 confirmed working) 
  2. OpenVSwitch (2.9.0 confirmed working)
+ 
+## Directory Structure
+/pox/ext
+	Directory containing controller code
+/dynamicp
+	- client.py
+	Client code for making QoS requests
+	- queue_setup.py
+	Script that sets up the static queues on each interface
+	- mininet_setup_dynamicp.py 
+	Script that sets up Mininet network, iperf servers and queues. Not required.
+
 
 ## Run Test
 ./run_network.sh [option]
