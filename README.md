@@ -7,8 +7,9 @@ See document folder for the paper describing PayFlow
 
 
 ## Dependencies
- 1. Mininet (2.2.2 confirmed working) 
- 2. OpenVSwitch (2.9.0 confirmed working)
+ 1. Mininet 2.2.2
+ 2. OpenVSwitch 2.9.0
+ 3. Pyota 2.0.6
  
 ## Directory Structure
 /pox/ext
